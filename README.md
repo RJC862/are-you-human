@@ -1,11 +1,25 @@
 # Are You Human? — Live Liveness Check
 
-A browser-based liveness checker that asks you to complete a short, **randomized
-sequence of 3–5 challenges** (blink, smile, open your mouth, turn your head
-left/right, touch your nose) — each with a **5-second countdown** — and verifies
+A browser-based liveness checker that asks you to complete a **randomized
+sequence of 5 challenges** — each with a **5-second countdown** — and verifies
 them live with on-device computer vision.
 
 Built for the YC "Requests for Startups" theme *Proving you're human*.
+
+## Challenges
+
+Each check randomly picks **5 distinct** challenges from this pool, verified
+with MediaPipe Face + Hand Landmarks:
+
+- **Head pose:** turn head left, turn head right, look up, tilt head to the
+  left shoulder, tilt head to the right shoulder
+- **Expressions:** blink, smile, open mouth, raise both eyebrows, purse lips,
+  squint
+- **Hand + face:** touch your nose, touch your chin, touch your forehead, cover
+  your mouth with one hand, hold your hand in front of your face
+
+Each challenge has a brief get-ready moment, then a 5-second window to perform
+it. All 5 must pass for a HUMAN VERIFIED result.
 
 ## What it does
 
@@ -27,7 +41,8 @@ Built for the YC "Requests for Startups" theme *Proving you're human*.
   limit.
 - **Makes harder, but does not fully stop,** a real-time face-swap deepfake that
   mirrors the attacker's own movements. This is a liveness/challenge check, not
-  a deepfake classifier.
+  a deepfake classifier. The hand challenges (cover mouth, hand in front of
+  face) are the hardest for 2D filters/deepfakes to fake convincingly.
 - The verdict is computed **in the browser**; this demo trusts the client. A
   production system would move verification server-side (or into a trusted
   enclave) and add anti-tamper measures.
