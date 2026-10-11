@@ -184,14 +184,28 @@ function ChallengeOverlay({
   onBegin: () => void;
 }) {
   if (!started || !state) {
+    // The camera must be tracking before a check can begin. While it is still
+    // loading (or errored), the button is dimmed and non-interactable.
+    const camReady = cameraStatus === "running" || cameraStatus === "no-face";
+    const label =
+      cameraStatus === "error"
+        ? "Camera unavailable"
+        : camReady
+          ? "Begin check"
+          : "Loading…";
     return (
       <div className="pointer-events-none absolute inset-0 flex items-end justify-center p-6">
         <button
           onClick={onBegin}
-          disabled={cameraStatus === "error"}
-          className="pointer-events-auto pulse-ring rounded-lg bg-accent px-8 py-3 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-40"
+          disabled={!camReady}
+          aria-disabled={!camReady}
+          className={`rounded-lg px-8 py-3 text-base font-semibold text-white transition ${
+            camReady
+              ? "pointer-events-auto pulse-ring bg-accent hover:bg-indigo-500"
+              : "cursor-not-allowed bg-accent/40 opacity-50"
+          }`}
         >
-          Begin check
+          {label}
         </button>
       </div>
     );
