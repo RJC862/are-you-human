@@ -1,6 +1,5 @@
-
 ## Try It out
-[Are You Human](https://are-you-human-deawq03qz-awesome-3a1e.vercel.app/)
+[Are You Human](https://are-you-human-bay.vercel.app/)
 
 
 # Are You Human? — Live Liveness Check
