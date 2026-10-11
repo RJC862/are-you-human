@@ -8,6 +8,11 @@ early and redeploy after each feature.
 > instructions and the result explanation. It is optional — the app uses
 > hardcoded fallbacks if the Luminal env vars are absent or the call fails.
 
+The repo ships with the config Vercel needs, so no manual setup is required:
+`vercel.json` (framework + build/install commands), `.nvmrc` + `engines` in
+`package.json` (Node 20+ for reproducible builds), and camera
+`Permissions-Policy` headers in `next.config.mjs`.
+
 ## Option A — Deploy from GitHub (recommended)
 
 1. Commit and push your branch:

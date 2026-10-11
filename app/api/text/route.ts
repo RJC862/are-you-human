@@ -16,6 +16,8 @@ import { luminalChat, isLuminalConfigured } from "@/lib/llm/luminal";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Headroom over the 8s LLM timeout in luminalChat (Hobby plan allows up to 10s).
+export const maxDuration = 10;
 
 type Body =
   | { kind: "instructions"; actions?: string[]; fallbacks?: string[] }
