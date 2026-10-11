@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import CameraView, { type CameraStatus } from "@/components/CameraView";
+import CameraView, {
+  type CameraStatus,
+  type CameraInfo,
+} from "@/components/CameraView";
 import { blendshape } from "@/lib/landmarks/parse";
 import type { FaceFrame } from "@/lib/landmarks/types";
 import {
@@ -33,6 +36,7 @@ export default function VerifyPage() {
 
   const [debug, setDebug] = useState(false);
   const [dbg, setDbg] = useState<DebugInfo | null>(null);
+  const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
 
   const engineRef = useRef<VerificationEngine | null>(null);
   const throttleRef = useRef(0);
@@ -143,6 +147,7 @@ export default function VerifyPage() {
             <CameraView
               onFrame={handleFrame}
               onStatus={setCameraStatus}
+              onCameraInfo={setCameraInfo}
               className="aspect-video w-full"
             />
             <ChallengeOverlay
@@ -159,10 +164,11 @@ export default function VerifyPage() {
               <ResultCard
                 verdict={result.verdict}
                 explanation={result.explanation}
+                virtualCamera={cameraInfo?.isVirtual ?? false}
                 onReset={reset}
               />
             )}
-            {debug && <DebugPanel dbg={dbg} />}
+            {debug && <DebugPanel dbg={dbg} cameraInfo={cameraInfo} />}
           </aside>
         </div>
 
@@ -290,10 +296,12 @@ function RoundList({ state }: { state: EngineState | null }) {
 function ResultCard({
   verdict,
   explanation,
+  virtualCamera,
   onReset,
 }: {
   verdict: Verdict;
   explanation: string;
+  virtualCamera: boolean;
   onReset: () => void;
 }) {
   return (
@@ -315,6 +323,11 @@ function ResultCard({
         </span>
       </div>
       <p className="mb-4 text-sm leading-relaxed text-gray-300">{explanation}</p>
+      {virtualCamera && (
+        <p className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs leading-relaxed text-warn">
+          ⚠ Virtual camera detected — this video may not come from a real camera.
+        </p>
+      )}
       <button
         onClick={onReset}
         className="w-full rounded-lg bg-accent px-4 py-2 font-semibold text-white hover:bg-indigo-500"
@@ -339,11 +352,19 @@ interface DebugInfo {
   hands: number;
 }
 
-function DebugPanel({ dbg }: { dbg: DebugInfo | null }) {
+function DebugPanel({
+  dbg,
+  cameraInfo,
+}: {
+  dbg: DebugInfo | null;
+  cameraInfo: CameraInfo | null;
+}) {
   const Row = ({ k, v, warn }: { k: string; v: string; warn?: boolean }) => (
-    <div className="flex justify-between">
-      <span className="text-gray-500">{k}</span>
-      <span className={warn ? "text-warn" : "text-gray-200"}>{v}</span>
+    <div className="flex justify-between gap-2">
+      <span className="shrink-0 text-gray-500">{k}</span>
+      <span className={`truncate text-right ${warn ? "text-warn" : "text-gray-200"}`}>
+        {v}
+      </span>
     </div>
   );
   return (
@@ -355,6 +376,11 @@ function DebugPanel({ dbg }: { dbg: DebugInfo | null }) {
         <p className="text-gray-500">waiting for frames…</p>
       ) : (
         <div className="space-y-1">
+          <Row
+            k="camera"
+            v={cameraInfo?.label || "—"}
+            warn={cameraInfo?.isVirtual}
+          />
           <Row
             k="face"
             v={dbg.hasFace ? `yes (${dbg.landmarkCount} pts)` : "no"}
