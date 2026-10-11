@@ -19,6 +19,34 @@ import { blendshape } from "@/lib/landmarks/parse";
 import type { FaceFrame, RawLandmark } from "@/lib/landmarks/types";
 import { dist2D, boundingBox, overlapRatio, type BBox } from "./geometry";
 
+/**
+ * Case-insensitive substrings that, when present in a camera device label,
+ * flag the source as a likely virtual / software camera (OBS, Snap Camera,
+ * DeepFaceLive, etc.) rather than a physical webcam.
+ *
+ * This is a soft risk signal only — it is surfaced as a warning banner and a
+ * result-screen note. It never changes the pass/fail verdict.
+ */
+export const VIRTUAL_CAMERA_KEYWORDS: string[] = [
+  "virtual",
+  "obs",
+  "manycam",
+  "snap",
+  "deepfacelive",
+  "xsplit",
+  "droidcam",
+];
+
+/**
+ * Returns true if the given camera label matches any virtual-camera keyword.
+ * Matching is case-insensitive and substring-based.
+ */
+export function isVirtualCameraLabel(label: string | undefined | null): boolean {
+  if (!label) return false;
+  const lower = label.toLowerCase();
+  return VIRTUAL_CAMERA_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 export type LivenessAction =
   // Base
   | "blink"
@@ -28,7 +56,6 @@ export type LivenessAction =
   | "turn_right"
   | "touch_nose"
   // Tier 1 — head pose
-  | "look_up"
   | "tilt_left"
   | "tilt_right"
   // Tier 1 — expressions
@@ -48,7 +75,6 @@ export const ALL_ACTIONS: LivenessAction[] = [
   "open_mouth",
   "turn_left",
   "turn_right",
-  "look_up",
   "tilt_left",
   "tilt_right",
   "raise_eyebrows",
@@ -146,8 +172,7 @@ export const ACTION_SPECS: Record<LivenessAction, DetectorSpec> = {
   turn_left: { kind: "sustain", signal: (f) => f.pose.yaw, threshold: 18, holdMs: 400 },
   turn_right: { kind: "sustain", signal: (f) => -f.pose.yaw, threshold: 18, holdMs: 400 },
 
-  // Tier 1 — head pose. pitch>0 = up; roll>0 = tilt toward subject's right shoulder.
-  look_up: { kind: "sustain", signal: (f) => f.pose.pitch, threshold: 15, holdMs: POSE_HOLD },
+  // Tier 1 — head pose. roll>0 = tilt toward subject's right shoulder.
   tilt_left: { kind: "sustain", signal: (f) => -f.pose.roll, threshold: 15, holdMs: POSE_HOLD },
   tilt_right: { kind: "sustain", signal: (f) => f.pose.roll, threshold: 15, holdMs: POSE_HOLD },
 
@@ -173,7 +198,6 @@ export const ACTION_PROMPTS: Record<LivenessAction, string> = {
   open_mouth: "Open your mouth",
   turn_left: "Slowly turn your head to the left",
   turn_right: "Slowly turn your head to the right",
-  look_up: "Look up toward the ceiling",
   tilt_left: "Tilt your head toward your left shoulder",
   tilt_right: "Tilt your head toward your right shoulder",
   raise_eyebrows: "Raise both eyebrows",
@@ -193,7 +217,6 @@ export const ACTION_LABELS: Record<LivenessAction, string> = {
   open_mouth: "Mouth open",
   turn_left: "Turn left",
   turn_right: "Turn right",
-  look_up: "Look up",
   tilt_left: "Tilt left",
   tilt_right: "Tilt right",
   raise_eyebrows: "Raise brows",
