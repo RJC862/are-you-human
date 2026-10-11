@@ -16,7 +16,6 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-/* Subtle animated grid backdrop */
 .grid-backdrop {
   background-image:
     linear-gradient(rgba(99, 102, 241, 0.08) 1px, transparent 1px),

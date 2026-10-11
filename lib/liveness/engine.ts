@@ -2,19 +2,17 @@
  * Verification engine — the guided round-flow state machine.
  *
  * Given a challenge sequence, it presents one challenge at a time, drives the
- * matching detector, enforces a per-round timeout, aggregates per-round
- * results, and collects passive-signal statistics across the whole session.
+ * matching detector, enforces a per-round 5-second timeout, and aggregates
+ * per-round pass/fail results.
  *
  * Pure and framework-free: `update(frame)` is called once per analyzed frame
  * and returns the current UI state. The clock comes from `frame.timestamp`.
  */
 import {
   createActionDetector,
-  ANTI_SPOOF_ACTIONS,
   type ActionDetector,
   type LivenessAction,
 } from "./actions";
-import { createPassiveAnalyzer, type PassiveResult } from "./passive";
 import type { Challenge } from "./challenge";
 import type { FaceFrame } from "@/lib/landmarks/types";
 
@@ -36,28 +34,18 @@ export interface EngineState {
   roundStatus: RoundStatus;
   /** Remaining pre-round "get ready" countdown, ms. */
   readyCountdownMs: number;
+  /** Remaining time to complete the current challenge, ms (the 5s window). */
+  challengeCountdownMs: number;
   /** Progress of the current round in [0, 1]. */
   currentProgress: number;
   results: RoundResult[];
-  passive: PassiveResult | null;
 }
 
 export interface SessionSignals {
   rounds: RoundResult[];
   passedRounds: number;
   totalRounds: number;
-  usedAntiSpoof: boolean;
-  antiSpoofPassed: number;
-  antiSpoofTotal: number;
   durationMs: number;
-  /** Latest passive human-likeness score (0..1). */
-  passiveHumanScore: number;
-  /** Lowest passive human-likeness observed across the session. */
-  passiveMinHumanScore: number;
-  /** Latest mean mesh jitter. */
-  meshJitter: number;
-  /** Lowest mean mesh jitter observed (catches static/photo feeds). */
-  minMeshJitter: number;
 }
 
 export interface EngineOptions {
@@ -77,9 +65,8 @@ export function createVerificationEngine(
   challenges: Challenge[],
   options: EngineOptions = {}
 ): VerificationEngine {
-  const cooldownMs = options.cooldownMs ?? 800;
+  const cooldownMs = options.cooldownMs ?? 1000;
   const total = challenges.length;
-  const passive = createPassiveAnalyzer();
 
   let phase: EnginePhase = "idle";
   let index = 0;
@@ -90,10 +77,6 @@ export function createVerificationEngine(
   let lastNow = 0;
   let currentProgress = 0;
   const results: RoundResult[] = [];
-
-  let latestPassive: PassiveResult | null = null;
-  let minHumanScore = 1;
-  let minMeshJitter = Infinity;
 
   function beginRound(i: number, now: number) {
     const ch = challenges[i];
@@ -127,23 +110,11 @@ export function createVerificationEngine(
     startTime = now;
     lastNow = now;
     currentProgress = 0;
-    minHumanScore = 1;
-    minMeshJitter = Infinity;
-    passive.reset();
     if (total > 0) beginRound(0, now);
   }
 
   function update(frame: FaceFrame): EngineState {
     lastNow = frame.timestamp;
-
-    // Passive signals are collected for the entire session.
-    latestPassive = passive.update(frame);
-    if (latestPassive.samples >= 3) {
-      if (latestPassive.humanScore < minHumanScore)
-        minHumanScore = latestPassive.humanScore;
-      if (latestPassive.meshJitter < minMeshJitter)
-        minMeshJitter = latestPassive.meshJitter;
-    }
 
     if (phase === "active" && detector) {
       const now = frame.timestamp;
@@ -164,6 +135,11 @@ export function createVerificationEngine(
   function getState(): EngineState {
     const readyCountdownMs =
       phase === "active" ? Math.max(0, Math.round(cooldownUntil - lastNow)) : 0;
+    const timeoutMs = challenges[index]?.timeoutMs ?? 0;
+    const challengeCountdownMs =
+      phase === "active" && readyCountdownMs === 0
+        ? Math.max(0, Math.round(roundStartTime + timeoutMs - lastNow))
+        : timeoutMs;
     return {
       phase,
       index,
@@ -171,31 +147,18 @@ export function createVerificationEngine(
       current: phase === "active" ? challenges[index] ?? null : null,
       roundStatus: readyCountdownMs > 0 ? "ready" : "detecting",
       readyCountdownMs,
+      challengeCountdownMs,
       currentProgress,
       results: [...results],
-      passive: latestPassive,
     };
   }
 
   function getSignals(): SessionSignals {
-    const passedRounds = results.filter((r) => r.passed).length;
-    const antiSpoofRounds = results.filter((r) =>
-      ANTI_SPOOF_ACTIONS.includes(r.action)
-    );
     return {
       rounds: [...results],
-      passedRounds,
+      passedRounds: results.filter((r) => r.passed).length,
       totalRounds: total,
-      usedAntiSpoof: challenges.some((c) =>
-        ANTI_SPOOF_ACTIONS.includes(c.action)
-      ),
-      antiSpoofPassed: antiSpoofRounds.filter((r) => r.passed).length,
-      antiSpoofTotal: antiSpoofRounds.length,
       durationMs: Math.max(0, Math.round(lastNow - startTime)),
-      passiveHumanScore: latestPassive?.humanScore ?? 0,
-      passiveMinHumanScore: minHumanScore === 1 && results.length === 0 ? 0 : minHumanScore,
-      meshJitter: latestPassive?.meshJitter ?? 0,
-      minMeshJitter: minMeshJitter === Infinity ? 0 : minMeshJitter,
     };
   }
 
@@ -205,10 +168,6 @@ export function createVerificationEngine(
     detector = null;
     results.length = 0;
     currentProgress = 0;
-    latestPassive = null;
-    minHumanScore = 1;
-    minMeshJitter = Infinity;
-    passive.reset();
   }
 
   return { start, update, getState, getSignals, reset };

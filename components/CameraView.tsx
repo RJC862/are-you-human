@@ -108,7 +108,7 @@ export default function CameraView({
           return await getHandLandmarker();
         } catch {
           // Hand detection is optional; the app still works without it
-          // (hand_wave / touch_nose challenges just won't fire).
+          // (the touch-nose challenge just won't fire).
           return null;
         }
       }

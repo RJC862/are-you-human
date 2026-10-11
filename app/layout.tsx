@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Are You Human? — Live Deepfake & Filter Liveness Verification",
+  title: "Are You Human? — Live Liveness Check",
   description:
-    "Prove you are a real, present human on camera — not a deepfake, AI avatar, or AR filter. An embeddable third-party human-verification authenticator.",
+    "Prove you are a real, present human on camera with a quick randomized liveness challenge. 100% on-device (MediaPipe).",
 };
 
 export default function RootLayout({

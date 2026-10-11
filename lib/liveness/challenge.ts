@@ -17,13 +17,19 @@ export interface Challenge {
   timeoutMs: number;
 }
 
+export const MIN_CHALLENGES = 3;
+export const MAX_CHALLENGES = 5;
+/** Each challenge must be completed within this window (the 5-second countdown). */
+export const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_CHALLENGE_COUNT = 4;
-export const MIN_CHALLENGES = 2;
-export const MAX_CHALLENGES = 6;
-export const DEFAULT_TIMEOUT_MS = 10000;
 
 function clampCount(n: number): number {
   return Math.max(MIN_CHALLENGES, Math.min(MAX_CHALLENGES, Math.floor(n)));
+}
+
+/** Pick a random challenge count in [MIN_CHALLENGES, MAX_CHALLENGES]. */
+export function randomChallengeCount(): number {
+  return MIN_CHALLENGES + Math.floor(Math.random() * (MAX_CHALLENGES - MIN_CHALLENGES + 1));
 }
 
 /** Deterministic PRNG (mulberry32) for reproducible sequences in tests. */
@@ -42,9 +48,7 @@ function mulberry32(seed: number): () => number {
  * Generate a randomized challenge sequence of `count` distinct actions.
  * When `seed` is provided the order is deterministic.
  *
- * The optional `pool` lets callers restrict/extend the available actions (e.g.
- * once hand-occlusion challenges are added, or to force high-value anti-spoof
- * actions earlier in the sequence).
+ * The optional `pool` lets callers restrict the available actions.
  */
 export function generateChallenges(
   count: number = DEFAULT_CHALLENGE_COUNT,
