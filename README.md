@@ -1,3 +1,8 @@
+
+## Try It out
+[Are You Human](https://are-you-human-deawq03qz-awesome-3a1e.vercel.app/)
+
+
 # Are You Human? — Live Liveness Check
 
 A browser-based liveness checker that asks you to complete a **randomized
@@ -53,6 +58,3 @@ it. All 5 must pass for a HUMAN VERIFIED result.
 - `@mediapipe/tasks-vision` (Face + Hand Landmarker, VIDEO mode)
 - One serverless route (`/api/text`) that calls a Luminal-hosted,
   OpenAI-compatible model for instruction/explanation copy (optional)
-
-## Try It out
-[Are You Human](https://are-you-human-deawq03qz-awesome-3a1e.vercel.app/)
