@@ -11,7 +11,10 @@ import {
   type LivenessAction,
 } from "@/lib/liveness/actions";
 import { round } from "@/lib/utils";
-import { generateChallenges, randomChallengeCount } from "@/lib/liveness/challenge";
+import { generateChallenges } from "@/lib/liveness/challenge";
+
+/** Every check uses exactly this many challenges. */
+const CHALLENGE_COUNT = 5;
 import {
   createVerificationEngine,
   type EngineState,
@@ -85,7 +88,7 @@ export default function VerifyPage() {
   }, []);
 
   const begin = useCallback(async () => {
-    const challenges = generateChallenges(randomChallengeCount());
+    const challenges = generateChallenges(CHALLENGE_COUNT);
     // Ask the LLM to phrase each instruction (hardcoded fallback on failure).
     const prompts = await fetchInstructions(
       challenges.map((c) => c.action),
@@ -365,7 +368,8 @@ function DebugPanel({ dbg }: { dbg: DebugInfo | null }) {
           <Row k="jawOpen" v={String(round(dbg.jawOpen, 2))} />
           <Row k="smile L/R" v={`${round(dbg.smileL, 2)} / ${round(dbg.smileR, 2)}`} />
           <div className="mt-2 border-t border-gray-800 pt-1 text-gray-500">
-            thresholds: blink≥0.5 ·2 · smile/jaw≥0.4 · turn |yaw|≥18° · nose≤0.09
+            blink≥0.5·2 · expr≥~0.4 · pose≥15° · touch≤0.09 · hand-region
+            overlap≥0.12
           </div>
         </div>
       )}
