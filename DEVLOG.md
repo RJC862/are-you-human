@@ -132,3 +132,50 @@ that builds cleanly and is ready to deploy to Vercel. Live webcam behavior
 (mesh/hand tracking, detector tuning) must be validated in a browser with a
 camera; thresholds in `lib/liveness/actions.ts` can be tuned using the debug
 panel.
+
+---
+
+## Task 7 — Expanded challenge set (Tier 1 + Tier 2 + hand-in-front-of-face)
+
+**Goal:** Grow the challenge variety with reliable, MediaPipe-detectable actions.
+
+**What was added** (`lib/liveness/actions.ts`, now 25 actions, all in the
+random pool via `ALL_ACTIONS`):
+
+- **Tier 1 — head pose (sustain):** look_up, look_down, tilt_left, tilt_right
+  (pitch/roll thresholds, 500 ms hold).
+- **Tier 1 — expressions (sustain on blendshapes):** raise_eyebrows
+  (`browInnerUp`+`browOuterUp*`), furrow_brows (`browDown*`), puff_cheeks
+  (`cheekPuff`), purse_lips (`mouthPucker`/`mouthFunnel`), show_teeth
+  (smile + jaw), neutral_face (inverse of the strongest expression; all low →
+  pass).
+- **Tier 2 — face touches (new generic "touch" detector):** touch_chin,
+  touch_forehead, touch_left_cheek, touch_right_cheek, touch_left_ear,
+  touch_right_ear — a hand point (index/thumb/middle tip or palm) within a
+  normalized distance of a face-region center, held ~300 ms. Regions are keyed
+  to 468-mesh indices; left/right are the **subject's** sides (mesh isn't
+  mirrored), so prompts match the user regardless of the mirrored preview.
+- **Tier 2 — hand-region holds (new "region"/"bothCheeks" detectors):**
+  - **hand_in_front_of_face** — hand bbox overlaps the full-face bbox ≥0.12 and
+    holds ~800 ms (the requested static hold).
+  - **cover_mouth** — hand bbox over the mouth region.
+  - **both_palms_cheeks** — a hand over each cheek region (needs 2 hands).
+
+Refactored `createActionDetector` into focused factories (edge / sustain /
+touch / region / bothCheeks). The existing `touch_nose` now uses the generic
+touch detector.
+
+**Honest notes:** ear touches sit at the mesh edge and are the least reliable
+(may need threshold tuning via the `D` panel). "Frown" and "suck in cheeks"
+from the request were omitted — no reliable blendshape. Finger-count / specific
+hand-shape gestures (Tier 3) were not added; they need a gesture classifier.
+
+**Verification**
+
+- `npx tsc --noEmit` → 0 errors; `npm run build` → clean, `/verify` 8.5 kB.
+- The LLM instruction/explanation path is generic, so new actions are phrased
+  automatically (with the hardcoded `ACTION_PROMPTS` as fallback).
+
+**How to test:** `/verify` → Begin check; the random sequence now draws from all
+25 actions. Use the `D` panel to watch blendshape/pose values and tune any
+threshold that feels off (expressions and ear touches are the likeliest).
