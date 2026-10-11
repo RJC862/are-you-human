@@ -7,23 +7,40 @@
  * Detector kinds:
  *  - "edge":    counts discrete pulses of a scalar (rises above `high`, then
  *               falls below `low`). Used for blinks.
- *  - "sustain": the scalar must stay beyond a threshold for `holdMs`. Smile,
- *               mouth-open, head turns.
- *  - "custom":  bespoke logic needing hand landmarks — touch_nose (an index
- *               fingertip reaches the nose tip).
+ *  - "sustain": a scalar must stay beyond a threshold for `holdMs`. Expressions
+ *               and head pose.
+ *  - "touch":   a hand fingertip (or any hand point) must come within a
+ *               distance of a face target point and hold.
+ *  - "region":  a hand bounding box must overlap a face region and hold
+ *               (hand-in-front-of-face, cover mouth).
  */
 import { clamp } from "@/lib/utils";
 import { blendshape } from "@/lib/landmarks/parse";
 import type { FaceFrame, RawLandmark } from "@/lib/landmarks/types";
-import { dist2D } from "./geometry";
+import { dist2D, boundingBox, overlapRatio, type BBox } from "./geometry";
 
 export type LivenessAction =
+  // Base
   | "blink"
   | "smile"
   | "open_mouth"
   | "turn_left"
   | "turn_right"
-  | "touch_nose";
+  | "touch_nose"
+  // Tier 1 — head pose
+  | "look_up"
+  | "tilt_left"
+  | "tilt_right"
+  // Tier 1 — expressions
+  | "raise_eyebrows"
+  | "purse_lips"
+  | "squint"
+  // Tier 2 — face touches
+  | "touch_chin"
+  | "touch_forehead"
+  // Tier 2 — hand-region holds
+  | "cover_mouth"
+  | "hand_in_front_of_face";
 
 export const ALL_ACTIONS: LivenessAction[] = [
   "blink",
@@ -31,11 +48,27 @@ export const ALL_ACTIONS: LivenessAction[] = [
   "open_mouth",
   "turn_left",
   "turn_right",
+  "look_up",
+  "tilt_left",
+  "tilt_right",
+  "raise_eyebrows",
+  "purse_lips",
+  "squint",
   "touch_nose",
+  "touch_chin",
+  "touch_forehead",
+  "cover_mouth",
+  "hand_in_front_of_face",
 ];
 
 /** Actions whose detection requires hand landmarks. */
-export const HAND_ACTIONS: LivenessAction[] = ["touch_nose"];
+export const HAND_ACTIONS: LivenessAction[] = [
+  "touch_nose",
+  "touch_chin",
+  "touch_forehead",
+  "cover_mouth",
+  "hand_in_front_of_face",
+];
 
 export interface ActionProgress {
   /** Whether the action has been completed. */
@@ -55,39 +88,82 @@ export interface ActionDetector {
 /** Scalar signal extractor per action. */
 type SignalFn = (frame: FaceFrame) => number;
 
+/**
+ * Face region specifier for "touch"/"region" detectors.
+ * `indices` are MediaPipe FaceLandmarker 468-mesh indices whose average is the
+ * target point / region center.
+ */
+type FaceRegion = "nose" | "chin" | "forehead" | "mouth" | "face";
+
 type DetectorSpec =
   | { kind: "edge"; signal: SignalFn; high: number; low: number; count: number }
   | { kind: "sustain"; signal: SignalFn; threshold: number; holdMs: number }
-  | { kind: "custom" };
+  | { kind: "touch"; region: FaceRegion; dist: number; holdMs: number }
+  | { kind: "region"; region: FaceRegion; overlap: number; holdMs: number };
 
 const avgSmile: SignalFn = (f) =>
   (blendshape(f, "mouthSmileLeft") + blendshape(f, "mouthSmileRight")) / 2;
 const maxBlink: SignalFn = (f) =>
   Math.max(blendshape(f, "eyeBlinkLeft"), blendshape(f, "eyeBlinkRight"));
+const avgBrowUp: SignalFn = (f) =>
+  (blendshape(f, "browInnerUp") +
+    blendshape(f, "browOuterUpLeft") +
+    blendshape(f, "browOuterUpRight")) /
+  3;
+const avgPucker: SignalFn = (f) =>
+  Math.max(blendshape(f, "mouthPucker"), blendshape(f, "mouthFunnel"));
+const avgSquint: SignalFn = (f) =>
+  (blendshape(f, "eyeSquintLeft") + blendshape(f, "eyeSquintRight")) / 2;
 
-// --- touch_nose tuning constants (refine with the debug panel) ---
-/** Face-mesh indices near the nose tip (MediaPipe 468-point mesh). */
-const NOSE_INDICES = [1, 4];
-/** Max normalized distance from fingertip to nose tip to count as a touch. */
-const TOUCH_NOSE_DIST = 0.09;
-const TOUCH_NOSE_HOLD = 150;
-/** Index fingertip landmark in the 21-point hand model. */
-const INDEX_FINGERTIP = 8;
+/**
+ * MediaPipe FaceLandmarker 468-mesh indices for region centers.
+ * (Approximate but stable landmarks; refine via the debug panel.)
+ */
+const REGION_INDICES: Record<FaceRegion, number[]> = {
+  nose: [1, 4],
+  chin: [152, 175],
+  forehead: [10, 151],
+  mouth: [13, 14, 61, 291],
+  face: [], // handled specially — full-face bbox
+};
+
+// --- Shared tuning constants (refine with the debug panel) ---
+const TOUCH_DIST = 0.09; // normalized fingertip→target distance
+const TOUCH_HOLD = 300;
+const REGION_OVERLAP = 0.12; // hand bbox / region bbox overlap
+const REGION_HOLD = 800;
+const EXPR_HOLD = 500;
+const POSE_HOLD = 500;
+/** Hand point indices considered "fingertips/palm" for touch proximity. */
+const HAND_TOUCH_POINTS = [8, 4, 12, 9]; // index tip, thumb tip, middle tip, palm
 
 /** Default detector specifications. */
 export const ACTION_SPECS: Record<LivenessAction, DetectorSpec> = {
   blink: { kind: "edge", signal: maxBlink, high: 0.5, low: 0.2, count: 2 },
   smile: { kind: "sustain", signal: avgSmile, threshold: 0.4, holdMs: 400 },
-  open_mouth: {
-    kind: "sustain",
-    signal: (f) => blendshape(f, "jawOpen"),
-    threshold: 0.4,
-    holdMs: 400,
-  },
+  open_mouth: { kind: "sustain", signal: (f) => blendshape(f, "jawOpen"), threshold: 0.4, holdMs: 400 },
   // yaw > 0 = subject turns toward their left (see matrixToEuler convention).
   turn_left: { kind: "sustain", signal: (f) => f.pose.yaw, threshold: 18, holdMs: 400 },
   turn_right: { kind: "sustain", signal: (f) => -f.pose.yaw, threshold: 18, holdMs: 400 },
-  touch_nose: { kind: "custom" },
+
+  // Tier 1 — head pose. pitch>0 = up; roll>0 = tilt toward subject's right shoulder.
+  look_up: { kind: "sustain", signal: (f) => f.pose.pitch, threshold: 15, holdMs: POSE_HOLD },
+  tilt_left: { kind: "sustain", signal: (f) => -f.pose.roll, threshold: 15, holdMs: POSE_HOLD },
+  tilt_right: { kind: "sustain", signal: (f) => f.pose.roll, threshold: 15, holdMs: POSE_HOLD },
+
+  // Tier 1 — expressions
+  raise_eyebrows: { kind: "sustain", signal: avgBrowUp, threshold: 0.4, holdMs: EXPR_HOLD },
+  purse_lips: { kind: "sustain", signal: avgPucker, threshold: 0.4, holdMs: EXPR_HOLD },
+  squint: { kind: "sustain", signal: avgSquint, threshold: 0.45, holdMs: EXPR_HOLD },
+
+  // Base + Tier 2 — face touches
+  touch_nose: { kind: "touch", region: "nose", dist: TOUCH_DIST, holdMs: TOUCH_HOLD },
+  touch_chin: { kind: "touch", region: "chin", dist: TOUCH_DIST, holdMs: TOUCH_HOLD },
+  touch_forehead: { kind: "touch", region: "forehead", dist: 0.1, holdMs: TOUCH_HOLD },
+
+  // Tier 2 — hand-region holds
+  cover_mouth: { kind: "region", region: "mouth", overlap: 0.25, holdMs: REGION_HOLD },
+  hand_in_front_of_face: { kind: "region", region: "face", overlap: REGION_OVERLAP, holdMs: REGION_HOLD },
 };
 
 /** Default human-readable instruction (fallback when the LLM is unavailable). */
@@ -97,7 +173,17 @@ export const ACTION_PROMPTS: Record<LivenessAction, string> = {
   open_mouth: "Open your mouth",
   turn_left: "Slowly turn your head to the left",
   turn_right: "Slowly turn your head to the right",
+  look_up: "Look up toward the ceiling",
+  tilt_left: "Tilt your head toward your left shoulder",
+  tilt_right: "Tilt your head toward your right shoulder",
+  raise_eyebrows: "Raise both eyebrows",
+  purse_lips: "Purse your lips",
+  squint: "Squint your eyes",
   touch_nose: "Touch the tip of your nose",
+  touch_chin: "Touch your chin",
+  touch_forehead: "Touch your forehead",
+  cover_mouth: "Cover your mouth with one hand",
+  hand_in_front_of_face: "Hold your hand in front of your face",
 };
 
 /** Short label for UI chips. */
@@ -107,7 +193,17 @@ export const ACTION_LABELS: Record<LivenessAction, string> = {
   open_mouth: "Mouth open",
   turn_left: "Turn left",
   turn_right: "Turn right",
+  look_up: "Look up",
+  tilt_left: "Tilt left",
+  tilt_right: "Tilt right",
+  raise_eyebrows: "Raise brows",
+  purse_lips: "Purse lips",
+  squint: "Squint",
   touch_nose: "Touch nose",
+  touch_chin: "Touch chin",
+  touch_forehead: "Touch forehead",
+  cover_mouth: "Cover mouth",
+  hand_in_front_of_face: "Hand on face",
 };
 
 export interface DetectorOverrides {
@@ -117,13 +213,32 @@ export interface DetectorOverrides {
   holdMs?: number;
 }
 
-/** Average position of the nose-tip landmarks, or null if unavailable. */
-function noseTip(landmarks: RawLandmark[]): { x: number; y: number } | null {
-  const pts = NOSE_INDICES.map((i) => landmarks[i]).filter(Boolean);
+/** Average position of a set of face-mesh landmarks, or null if unavailable. */
+function regionCenter(
+  landmarks: RawLandmark[],
+  region: FaceRegion
+): { x: number; y: number } | null {
+  const pts = REGION_INDICES[region].map((i) => landmarks[i]).filter(Boolean);
   if (pts.length === 0) return null;
   const x = pts.reduce((s, p) => s + p.x, 0) / pts.length;
   const y = pts.reduce((s, p) => s + p.y, 0) / pts.length;
   return { x, y };
+}
+
+/** Bounding box of a face region (padded), or the full face for "face". */
+function regionBox(landmarks: RawLandmark[], region: FaceRegion): BBox | null {
+  if (region === "face") return boundingBox(landmarks);
+  const pts = REGION_INDICES[region].map((i) => landmarks[i]).filter(Boolean);
+  const box = boundingBox(pts);
+  if (!box) return null;
+  // Pad the small region so a hand can plausibly overlap it.
+  const pad = 0.05;
+  return {
+    minX: box.minX - pad,
+    minY: box.minY - pad,
+    maxX: box.maxX + pad,
+    maxY: box.maxY + pad,
+  };
 }
 
 /** Create a stateful detector for a given action. */
@@ -133,44 +248,57 @@ export function createActionDetector(
 ): ActionDetector {
   const spec = ACTION_SPECS[action];
 
-  if (spec.kind === "custom") {
-    return createTouchNoseDetector(action);
+  switch (spec.kind) {
+    case "touch":
+      return createTouchDetector(action, spec.region, spec.dist, overrides.holdMs ?? spec.holdMs);
+    case "region":
+      return createRegionDetector(action, spec.region, spec.overlap, overrides.holdMs ?? spec.holdMs);
+    case "edge":
+      return createEdgeDetector(action, spec, overrides.count ?? spec.count);
+    case "sustain":
+      return createSustainDetector(action, spec.signal, spec.threshold, overrides.holdMs ?? spec.holdMs);
   }
+}
 
-  if (spec.kind === "edge") {
-    const required = overrides.count ?? spec.count;
-    let count = 0;
-    let armed = false;
-
-    return {
-      action,
-      reset() {
-        count = 0;
+function createEdgeDetector(
+  action: LivenessAction,
+  spec: { signal: SignalFn; high: number; low: number },
+  required: number
+): ActionDetector {
+  let count = 0;
+  let armed = false;
+  return {
+    action,
+    reset() {
+      count = 0;
+      armed = false;
+    },
+    update(frame: FaceFrame): ActionProgress {
+      const value = spec.signal(frame);
+      if (!frame.hasFace) {
         armed = false;
-      },
-      update(frame: FaceFrame): ActionProgress {
-        const value = spec.signal(frame);
-        if (!frame.hasFace) {
+      } else {
+        if (!armed && value >= spec.high) armed = true;
+        else if (armed && value <= spec.low) {
+          count++;
           armed = false;
-        } else {
-          if (!armed && value >= spec.high) armed = true;
-          else if (armed && value <= spec.low) {
-            count++;
-            armed = false;
-          }
         }
-        const partial = armed ? 0.5 : 0;
-        const progress = clamp((count + partial) / required, 0, 1);
-        return { satisfied: count >= required, progress, value };
-      },
-    };
-  }
+      }
+      const partial = armed ? 0.5 : 0;
+      const progress = clamp((count + partial) / required, 0, 1);
+      return { satisfied: count >= required, progress, value };
+    },
+  };
+}
 
-  // sustain
-  const holdMs = overrides.holdMs ?? spec.holdMs;
+function createSustainDetector(
+  action: LivenessAction,
+  signal: SignalFn,
+  threshold: number,
+  holdMs: number
+): ActionDetector {
   let holdStart: number | null = null;
   let heldMs = 0;
-
   return {
     action,
     reset() {
@@ -178,8 +306,8 @@ export function createActionDetector(
       heldMs = 0;
     },
     update(frame: FaceFrame): ActionProgress {
-      const value = spec.signal(frame);
-      const passing = frame.hasFace && value >= spec.threshold;
+      const value = signal(frame);
+      const passing = frame.hasFace && value >= threshold;
       if (passing) {
         if (holdStart === null) holdStart = frame.timestamp;
         heldMs = frame.timestamp - holdStart;
@@ -193,11 +321,15 @@ export function createActionDetector(
   };
 }
 
-/** Fingertip-to-nose touch detector (uses Hand Landmarker). */
-function createTouchNoseDetector(action: LivenessAction): ActionDetector {
+/** Fingertip/palm-to-face-point touch detector (uses Hand Landmarker). */
+function createTouchDetector(
+  action: LivenessAction,
+  region: FaceRegion,
+  maxDist: number,
+  holdMs: number
+): ActionDetector {
   let holdStart: number | null = null;
   let heldMs = 0;
-
   return {
     action,
     reset() {
@@ -207,18 +339,20 @@ function createTouchNoseDetector(action: LivenessAction): ActionDetector {
     update(frame: FaceFrame): ActionProgress {
       let dist = Infinity;
       if (frame.hasFace && frame.hands && frame.hands.length > 0) {
-        const nose = noseTip(frame.landmarks);
-        if (nose) {
+        const target = regionCenter(frame.landmarks, region);
+        if (target) {
           for (const hand of frame.hands) {
-            const tip = hand[INDEX_FINGERTIP];
-            if (tip) {
-              const d = dist2D(tip, nose);
-              if (d < dist) dist = d;
+            for (const idx of HAND_TOUCH_POINTS) {
+              const p = hand[idx];
+              if (p) {
+                const d = dist2D(p, target);
+                if (d < dist) dist = d;
+              }
             }
           }
         }
       }
-      const touching = dist <= TOUCH_NOSE_DIST;
+      const touching = dist <= maxDist;
       if (touching) {
         if (holdStart === null) holdStart = frame.timestamp;
         heldMs = frame.timestamp - holdStart;
@@ -226,16 +360,51 @@ function createTouchNoseDetector(action: LivenessAction): ActionDetector {
         holdStart = null;
         heldMs = 0;
       }
-      const proximity =
-        dist === Infinity ? 0 : clamp(1 - dist / (TOUCH_NOSE_DIST * 3), 0, 1);
-      const progress = touching
-        ? clamp(0.5 + (0.5 * heldMs) / TOUCH_NOSE_HOLD, 0, 1)
-        : 0.5 * proximity;
-      return {
-        satisfied: heldMs >= TOUCH_NOSE_HOLD,
-        progress,
-        value: dist === Infinity ? 999 : dist,
-      };
+      const proximity = dist === Infinity ? 0 : clamp(1 - dist / (maxDist * 3), 0, 1);
+      const progress = touching ? clamp(0.5 + (0.5 * heldMs) / holdMs, 0, 1) : 0.5 * proximity;
+      return { satisfied: heldMs >= holdMs, progress, value: dist === Infinity ? 999 : dist };
     },
   };
 }
+
+/** Hand-bbox-over-face-region sustain detector (hand in front of face, cover mouth). */
+function createRegionDetector(
+  action: LivenessAction,
+  region: FaceRegion,
+  minOverlap: number,
+  holdMs: number
+): ActionDetector {
+  let holdStart: number | null = null;
+  let heldMs = 0;
+  return {
+    action,
+    reset() {
+      holdStart = null;
+      heldMs = 0;
+    },
+    update(frame: FaceFrame): ActionProgress {
+      let best = 0;
+      if (frame.hasFace && frame.hands && frame.hands.length > 0) {
+        const target = regionBox(frame.landmarks, region);
+        if (target) {
+          for (const hand of frame.hands) {
+            const hb = boundingBox(hand);
+            if (hb) best = Math.max(best, overlapRatio(hb, target));
+          }
+        }
+      }
+      const passing = best >= minOverlap;
+      if (passing) {
+        if (holdStart === null) holdStart = frame.timestamp;
+        heldMs = frame.timestamp - holdStart;
+      } else {
+        holdStart = null;
+        heldMs = 0;
+      }
+      const progress = passing ? clamp(0.4 + (0.6 * heldMs) / holdMs, 0, 1) : clamp(best / minOverlap, 0, 0.4);
+      return { satisfied: heldMs >= holdMs, progress, value: best };
+    },
+  };
+}
+
+
