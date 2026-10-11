@@ -54,42 +54,5 @@ it. All 5 must pass for a HUMAN VERIFIED result.
 - One serverless route (`/api/text`) that calls a Luminal-hosted,
   OpenAI-compatible model for instruction/explanation copy (optional)
 
-## Run locally
-
-```bash
-npm install
-npm run dev     # http://localhost:3000  (localhost is a secure context, so
-                # the webcam works without HTTPS locally)
-```
-
-Open `/verify`, allow the camera, and press **Begin check**.
-
-### Optional LLM text
-
-Create `.env.local` to let the LLM phrase instructions/explanations (otherwise
-hardcoded text is used — see `.env.example`):
-
-```
-LUMINAL_API_KEY=...
-LUMINAL_BASE_URL=https://api.luminal.ai/v1
-LUMINAL_MODEL=deepseek-chat
-```
-
-## Deploy
-
-See [DEPLOY.md](./DEPLOY.md). The webcam requires HTTPS, which Vercel provides.
-
-## Project layout
-
-```
-app/
-  page.tsx            landing
-  verify/page.tsx     the liveness check UI (+ hidden debug panel)
-  api/text/route.ts   LLM copy, with hardcoded fallbacks
-components/
-  CameraView.tsx      webcam + Face/Hand Landmarker loop + overlay
-lib/
-  landmarks/          MediaPipe loaders, frame parsing, types
-  liveness/           action detectors, challenge generator, engine, verdict
-  llm/                Luminal client + text fetch helpers
-```
+## Try It out
+[Are You Human](https://are-you-human-deawq03qz-awesome-3a1e.vercel.app/)
