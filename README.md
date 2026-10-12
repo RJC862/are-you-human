@@ -21,7 +21,7 @@ with MediaPipe Face + Hand Landmarks:
 - **Expressions:** blink, smile, open mouth, raise both eyebrows, purse lips,
   squint
 - **Hand + face:** touch your nose, touch your chin, touch your forehead, cover
-  your mouth with one hand, hold your hand in front of your face
+  your mouth with one hand
 
 Each challenge has a brief get-ready moment, then a 5-second window to perform
 it. All 5 must pass for a HUMAN VERIFIED result.

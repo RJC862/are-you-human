@@ -66,8 +66,7 @@ export type LivenessAction =
   | "touch_chin"
   | "touch_forehead"
   // Tier 2 — hand-region holds
-  | "cover_mouth"
-  | "hand_in_front_of_face";
+  | "cover_mouth";
 
 export const ALL_ACTIONS: LivenessAction[] = [
   "blink",
@@ -84,7 +83,6 @@ export const ALL_ACTIONS: LivenessAction[] = [
   "touch_chin",
   "touch_forehead",
   "cover_mouth",
-  "hand_in_front_of_face",
 ];
 
 /** Actions whose detection requires hand landmarks. */
@@ -93,7 +91,6 @@ export const HAND_ACTIONS: LivenessAction[] = [
   "touch_chin",
   "touch_forehead",
   "cover_mouth",
-  "hand_in_front_of_face",
 ];
 
 export interface ActionProgress {
@@ -119,7 +116,7 @@ type SignalFn = (frame: FaceFrame) => number;
  * `indices` are MediaPipe FaceLandmarker 468-mesh indices whose average is the
  * target point / region center.
  */
-type FaceRegion = "nose" | "chin" | "forehead" | "mouth" | "face";
+type FaceRegion = "nose" | "chin" | "forehead" | "mouth";
 
 type DetectorSpec =
   | { kind: "edge"; signal: SignalFn; high: number; low: number; count: number }
@@ -150,13 +147,11 @@ const REGION_INDICES: Record<FaceRegion, number[]> = {
   chin: [152, 175],
   forehead: [10, 151],
   mouth: [13, 14, 61, 291],
-  face: [], // handled specially — full-face bbox
 };
 
 // --- Shared tuning constants (refine with the debug panel) ---
 const TOUCH_DIST = 0.09; // normalized fingertip→target distance
 const TOUCH_HOLD = 300;
-const REGION_OVERLAP = 0.12; // hand bbox / region bbox overlap
 const REGION_HOLD = 800;
 const EXPR_HOLD = 500;
 const POSE_HOLD = 500;
@@ -188,7 +183,6 @@ export const ACTION_SPECS: Record<LivenessAction, DetectorSpec> = {
 
   // Tier 2 — hand-region holds
   cover_mouth: { kind: "region", region: "mouth", overlap: 0.25, holdMs: REGION_HOLD },
-  hand_in_front_of_face: { kind: "region", region: "face", overlap: REGION_OVERLAP, holdMs: REGION_HOLD },
 };
 
 /** Default human-readable instruction (fallback when the LLM is unavailable). */
@@ -207,7 +201,6 @@ export const ACTION_PROMPTS: Record<LivenessAction, string> = {
   touch_chin: "Touch your chin",
   touch_forehead: "Touch your forehead",
   cover_mouth: "Cover your mouth with one hand",
-  hand_in_front_of_face: "Hold your hand in front of your face",
 };
 
 /** Short label for UI chips. */
@@ -226,7 +219,6 @@ export const ACTION_LABELS: Record<LivenessAction, string> = {
   touch_chin: "Touch chin",
   touch_forehead: "Touch forehead",
   cover_mouth: "Cover mouth",
-  hand_in_front_of_face: "Hand on face",
 };
 
 export interface DetectorOverrides {
@@ -248,9 +240,8 @@ function regionCenter(
   return { x, y };
 }
 
-/** Bounding box of a face region (padded), or the full face for "face". */
+/** Bounding box of a face region (padded). */
 function regionBox(landmarks: RawLandmark[], region: FaceRegion): BBox | null {
-  if (region === "face") return boundingBox(landmarks);
   const pts = REGION_INDICES[region].map((i) => landmarks[i]).filter(Boolean);
   const box = boundingBox(pts);
   if (!box) return null;
