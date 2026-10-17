@@ -1,3 +1,7 @@
+# Brief Note
+This project was for an 8-hour hackathon hosted by a club at Penn State. Purely vibe coded for fun. I didn't hand code anything.
+
+
 # Try It out
 [Are You Human](https://are-you-human-bay.vercel.app/)
 
